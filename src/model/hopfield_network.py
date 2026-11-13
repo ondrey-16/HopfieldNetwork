@@ -1,16 +1,22 @@
 import numpy as np
+import matplotlib.pyplot as plt
+import math
 
 class HopfieldNetwork:
     def __init__(self,
                  n: int=25,
                  method: str="hebb",
                  if_asynchronic: bool=True,
+                 lr=0.01,
+                 epochs=100,
                  random_state: int=42
                 ):
-        super.__init__()
+        super().__init__()
         self.n = n
         self.method = method if method == "hebb" or method == "oji" else "hebb"
         self.if_asynchronic = if_asynchronic
+        self.lr = lr
+        self.epochs = epochs
         self.random_state = random_state
 
         self.rng = np.random.default_rng(random_state)
@@ -31,7 +37,7 @@ class HopfieldNetwork:
     def recall(self, pattern: np.ndarray, max_iter: int=1000) -> dict:
         pattern = np.asarray(pattern)
 
-        if pattern.shape != (self.n, ):
+        if pattern.shape[0] != self.n:
             raise ValueError("Invalid pattern size!")
 
         if not np.all(np.isin(pattern, [-1, 1])):
@@ -39,20 +45,46 @@ class HopfieldNetwork:
 
         self.states = pattern.copy()
 
+        history = [self.states.copy()]
         visited = {self.states.tobytes(): 0}
 
         for i in range(1, max_iter + 1):
-            if (self.step()):
-                return {"Result": "stable", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy()}
+            is_stable = self.step()
+            history.append(self.states.copy())
+
+            if (is_stable):
+                return {"Result": "stable", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy(), "History": history}
 
             states_key = self.states.tobytes()
             
             if not self.if_asynchronic and states_key in visited:
-                return {"Result": "cycle detected in synchronic mode", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy()}
+                return {"Result": "cycle detected in synchronic mode", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy(), "History": history}
 
             visited[states_key] = i
 
-        return {"Result": "max iterations reached", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy()}
+        return {"Result": "max iterations reached", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy(), "History": history}
+
+    def plot_history(self, history: list, plot_dim: tuple) -> None:
+        if math.prod(plot_dim) != self.n:
+            raise ValueError("Incorrect bitmap's dimensions")
+
+        count = len(history)
+        cols = min(5, count)
+        rows = math.ceil(count / cols)
+
+        _, axes = plt.subplots(rows, cols, figsize=(cols * 2.5, rows * 2.8), squeeze=False)
+
+        for k, ax in enumerate(axes.flat):
+            if k < count:
+                bitmap = history[k].reshape(plot_dim)
+
+                ax.imshow(bitmap, cmap="gray_r", vmin=-1, vmax=1, interpolation="nearest")
+                ax.set_title(f"Iteration: {k}")
+
+            ax.axis("off")
+
+        plt.tight_layout()
+        plt.show()
 
     def step(self) -> bool:
         return self._async_step() if self.if_asynchronic else self._sync_step()
@@ -65,6 +97,13 @@ class HopfieldNetwork:
 
     def get_states(self) -> np.ndarray:
         return self.states.copy()
+
+    def change_method(self, method: str="hebb"):
+        if method == "hebb" or method == "oji":
+            self.method = method
+
+    def change_sync_mode(self, if_asynchronic: bool=True):
+        self.if_asynchronic = if_asynchronic
 
     def _sync_step(self) -> bool:
         a = self.weights @ self.states + self.biases
@@ -87,12 +126,22 @@ class HopfieldNetwork:
         return if_stable
 
     def _hebb(self, patterns: np.ndarray) -> None:
-        for i in range(self.n):
-            for j in range(self.n):
-                self.weights[i][j] = np.sum(patterns[p][i] * patterns[p][j] for p in range(patterns.shape[0])) / self.n if i != j else 0
+        self.weights = (patterns.T @ patterns) / self.n
+        np.fill_diagonal(self.weights, 0)
 
     def _oji(self, patterns: np.ndarray) -> None:
-        pass
+        self.weights = self.rng.normal(loc=0.0, scale=0.01, size=(self.n, self.n))
+        self.weights = (self.weights + self.weights.T) / 2
+        np.fill_diagonal(self.weights, 0)
+        
+        for _ in range(self.epochs):
+            for p in patterns:
+                a = self.weights @ p
+                for i in range(self.n):
+                    for j in range(self.n):
+                        self.weights[i][j] = self.weights[i][j] + self.lr * a[i] * (p[j] - a[i] * self.weights[i][j])
+                self.weights = (self.weights + self.weights.T) / 2
+                np.fill_diagonal(self.weights, 0)
 
     def _sign_activate(self, a, i) -> int:
         if a < 0:
