@@ -49,7 +49,7 @@ class HopfieldNetwork:
         visited = {self.states.tobytes(): 0}
 
         for i in range(1, max_iter + 1):
-            is_stable = self.step()
+            is_stable = self._step()
             history.append(self.states.copy())
 
             if (is_stable):
@@ -74,20 +74,29 @@ class HopfieldNetwork:
 
         _, axes = plt.subplots(rows, cols, figsize=(cols * 2.5, rows * 2.8), squeeze=False)
 
-        for k, ax in enumerate(axes.flat):
+        for k, ax in enumerate(axes.flat):           
             if k < count:
                 bitmap = history[k].reshape(plot_dim)
 
                 ax.imshow(bitmap, cmap="gray_r", vmin=-1, vmax=1, interpolation="nearest")
-                ax.set_title(f"Iteration: {k}")
+                ax.set_title(f"Iteration: {k}") if k > 0 else ax.set_title(f"Input pattern") 
 
             ax.axis("off")
 
         plt.tight_layout()
         plt.show()
 
-    def step(self) -> bool:
-        return self._async_step() if self.if_asynchronic else self._sync_step()
+    def check_if_stable(self, pattern: np.ndarray) -> bool:
+        pattern = np.asarray(pattern)
+        
+        if pattern.shape[0] != self.n:
+            raise ValueError("Invalid pattern size!")
+
+        if not np.all(np.isin(pattern, [-1, 1])):
+            raise ValueError("Invalid pattern structure - should contain only (-1, 1) values")
+
+        self.states = pattern.copy()
+        return self._step()
 
     def get_energy(self) -> float:
         return -0.5 * (self.states @ self.weights @ self.states) - (self.biases @ self.states)
@@ -104,6 +113,9 @@ class HopfieldNetwork:
 
     def change_sync_mode(self, if_asynchronic: bool=True):
         self.if_asynchronic = if_asynchronic
+
+    def _step(self) -> bool:
+        return self._async_step() if self.if_asynchronic else self._sync_step()
 
     def _sync_step(self) -> bool:
         a = self.weights @ self.states + self.biases
@@ -137,9 +149,9 @@ class HopfieldNetwork:
         for _ in range(self.epochs):
             for p in patterns:
                 a = self.weights @ p
-                for i in range(self.n):
-                    for j in range(self.n):
-                        self.weights[i][j] = self.weights[i][j] + self.lr * a[i] * (p[j] - a[i] * self.weights[i][j])
+
+                self.weights += self.lr * (np.outer(a, p) - (a[:, None] ** 2) * self.weights)
+                
                 self.weights = (self.weights + self.weights.T) / 2
                 np.fill_diagonal(self.weights, 0)
 
