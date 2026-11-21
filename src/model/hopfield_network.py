@@ -34,7 +34,7 @@ class HopfieldNetwork:
 
         self._hebb(patterns) if self.method == "hebb" else self._oji(patterns)
 
-    def recall(self, pattern: np.ndarray, max_iter: int=1000) -> dict:
+    def recall(self, pattern: np.ndarray, max_iter: int=100) -> dict:
         pattern = np.asarray(pattern)
 
         if pattern.shape[0] != self.n:
@@ -149,11 +149,10 @@ class HopfieldNetwork:
         for _ in range(self.epochs):
             for p in patterns:
                 a = self.weights @ p
-
-                self.weights += self.lr * (np.outer(a, p) - (a[:, None] ** 2) * self.weights)
+                self.weights += self.lr * (np.outer(a, p) - np.diag(a ** 2) @ self.weights)
                 
-                self.weights = (self.weights + self.weights.T) / 2
-                np.fill_diagonal(self.weights, 0)
+            self.weights = (self.weights + self.weights.T) / 2
+            np.fill_diagonal(self.weights, 0)
 
     def _sign_activate(self, a, i) -> int:
         if a < 0:
