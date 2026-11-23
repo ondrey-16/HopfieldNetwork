@@ -34,7 +34,7 @@ class HopfieldNetwork:
 
         self._hebb(patterns) if self.method == "hebb" else self._oji(patterns)
 
-    def recall(self, pattern: np.ndarray, max_iter: int=100) -> dict:
+    def recall(self, pattern: np.ndarray, max_iter: int=100, save_history=False) -> dict:
         pattern = np.asarray(pattern)
 
         if pattern.shape[0] != self.n:
@@ -50,7 +50,8 @@ class HopfieldNetwork:
 
         for i in range(1, max_iter + 1):
             is_stable = self._step()
-            history.append(self.states.copy())
+            if (save_history):
+                history.append(self.states.copy())
 
             if (is_stable):
                 return {"Result": "stable", "Last iteration": i, "Output states": self.states.copy(), "Energy": self.get_energy(), "History": history}
@@ -95,8 +96,9 @@ class HopfieldNetwork:
         if not np.all(np.isin(pattern, [-1, 1])):
             raise ValueError("Invalid pattern structure - should contain only (-1, 1) values")
 
-        self.states = pattern.copy()
-        return self._step()
+        y = self.weights @ pattern + self.biases
+
+        return bool(np.all(y * pattern >= 0))
 
     def get_energy(self) -> float:
         return -0.5 * (self.states @ self.weights @ self.states) - (self.biases @ self.states)
