@@ -9,7 +9,8 @@ class HopfieldNetwork:
                  if_asynchronic: bool=True,
                  lr=0.01,
                  epochs=100,
-                 random_state: int=42
+                 random_state: int=42,
+                 low_memory: bool=False
                 ):
         super().__init__()
         self.n = n
@@ -18,11 +19,13 @@ class HopfieldNetwork:
         self.lr = lr
         self.epochs = epochs
         self.random_state = random_state
+        self.low_memory = low_memory
 
         self.rng = np.random.default_rng(random_state)
 
         self.states = np.ones(self.n, dtype=int)
-        self.weights = np.zeros((self.n, self.n), dtype=float)
+        self.weights = None if low_memory else np.zeros((self.n, self.n), dtype=float)
+        self.patterns = None
         self.biases = np.zeros(self.n, dtype=int)
 
     def train(self, patterns: np.ndarray) -> None:
@@ -31,6 +34,10 @@ class HopfieldNetwork:
 
         if not np.all(np.isin(patterns, [-1, 1])):
             raise ValueError("Invalid patterns structure - should contain only (-1, 1) values")
+
+        if self.low_memory:
+            self.patterns = patterns.astype(np.float32)
+            return
 
         self._hebb(patterns) if self.method == "hebb" else self._oji(patterns)
 
@@ -87,6 +94,27 @@ class HopfieldNetwork:
         plt.tight_layout()
         plt.show()
 
+    def plot_first_last(self, history: list, plot_dim: tuple) -> None:
+        if math.prod(plot_dim) != self.n:
+            raise ValueError("Incorrect bitmap's dimensions")
+
+        items = [
+            (history[0], "Input pattern"),
+            (history[-1], f"Output pattern (Iter: {len(history) - 1})")
+        ]
+
+        _, axes = plt.subplots(1, 2, figsize=(6, 3.2), squeeze=False)
+
+        for k, (state, title) in enumerate(items):
+            ax = axes[0, k]
+            bitmap = state.reshape(plot_dim)
+            ax.imshow(bitmap, cmap="gray_r", vmin=-1, vmax=1, interpolation="nearest")
+            ax.set_title(title)
+            ax.axis("off")
+
+        plt.tight_layout()
+        plt.show()
+
     def check_if_stable(self, pattern: np.ndarray) -> bool:
         pattern = np.asarray(pattern)
         
@@ -101,7 +129,13 @@ class HopfieldNetwork:
         return bool(np.all(y * pattern >= 0))
 
     def get_energy(self) -> float:
-        return -0.5 * (self.states @ self.weights @ self.states) - (self.biases @ self.states)
+        if self.low_memory:
+            p = self.patterns.shape[0]
+            states_f = self.states.astype(np.float32)
+            proj = self.patterns @ states_f
+            quad = ((proj @ proj) - p * self.n) / self.n
+            return float(-0.5 * quad - (self.biases @ self.states))
+        return float(-0.5 * (self.states @ self.weights @ self.states) - (self.biases @ self.states))
 
     def get_weights(self) -> np.ndarray:
         return self.weights.copy()
@@ -120,7 +154,12 @@ class HopfieldNetwork:
         return self._async_step() if self.if_asynchronic else self._sync_step()
 
     def _sync_step(self) -> bool:
-        a = self.weights @ self.states + self.biases
+        if self.low_memory:
+            p = self.patterns.shape[0]
+            states_f = self.states.astype(np.float32)
+            a = (self.patterns.T @ (self.patterns @ states_f)) / self.n - (p / self.n) * states_f + self.biases
+        else:
+            a = self.weights @ self.states + self.biases
         if_stable = True
         for i in range(self.n):
             new_state = self._sign_activate(a[i], i)
@@ -131,6 +170,20 @@ class HopfieldNetwork:
 
     def _async_step(self) -> bool:
         if_stable = True
+        if self.low_memory:
+            p = self.patterns.shape[0]
+            states_f = self.states.astype(np.float32)
+            proj = self.patterns @ states_f
+            for i in self.rng.permutation(self.n):
+                old_val = self.states[i]
+                a = (self.patterns[:, i] @ proj - p * old_val) / self.n + self.biases[i]
+                new_state = self._sign_activate(a, i)
+                if new_state != old_val:
+                    if_stable = False
+                    self.states[i] = new_state
+                    proj += self.patterns[:, i] * (new_state - old_val)
+            return if_stable
+
         for i in self.rng.permutation(self.n):
             a = self.weights[i] @ self.states + self.biases[i]
             new_state = self._sign_activate(a, i)
